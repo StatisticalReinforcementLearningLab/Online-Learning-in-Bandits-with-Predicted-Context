@@ -46,6 +46,7 @@ colors = {
     'MEB': 'blue',
     'MEB_naive': 'green',
     'TS': 'red',
+    'Adv_UCB': 'black',
     'UCB': 'violet',
     'oracle': 'yellow'
 }
@@ -56,15 +57,16 @@ def plot_error(results, algs, oPlot, i = 1, save = False, sub_sampling = 100, sa
     n_experiment = 10#results[algs[0]]['regret_err_sum'].shape[1]
     T = results[algs[0]]['regret_err_sum'].shape[0]
     fig, ax = plt.subplots(figsize=(4, 3))
-    sub = np.arange(0, int((1-warmup) * T), sub_sampling)
+    warmup_T = int(T * warmup)
+    sub = np.arange(0, T-warmup_T, sub_sampling)
     for alg in algs:
         if alg == 'oracle':
             continue
         mean = results[alg]['estimation_err_sum'][:, i] / n_experiment
         sd = (results[alg]['estimation_err_sum2'][:, i] - mean ** 2) ** 0.5 / (n_experiment)
         
-        mean = mean[:int((1-warmup) * T)+1]
-        sd = mean[:int((1-warmup) * T)+1]
+        mean = mean[warmup_T:]
+        sd = sd[warmup_T:]
         ax.plot(np.arange(T)[sub], np.log(mean)[sub], color = colors[alg], markersize=0.2, label = alg)
         ax.fill_between(np.arange(T)[sub], np.log(mean - sd)[sub], \
                         np.log(mean + sd)[sub], color = colors[alg], alpha=0.1)
@@ -80,19 +82,19 @@ def plot_error(results, algs, oPlot, i = 1, save = False, sub_sampling = 100, sa
 
 ## ----regret plot----
 def plot_regret(results, algs, oPlot, log = False, upper = 6, warmup = 0.0, save = False, sub_sampling = 100, savename = None):
-    n_experiment = 10
+    n_experiment = 100
     T = results[algs[0]]['regret_err_sum'].shape[0]
     
     warmup_T = int(T * warmup)
     fig, ax = plt.subplots(figsize=(4, 3))
     # plot regret
-    T = T - warmup_T
-    sub = np.arange(0, T, sub_sampling)
+    # T = T - warmup_T
+    sub = np.arange(0, T-warmup_T, sub_sampling)
     m, s = [], []
     for alg in algs:
         if alg == 'oracle':
             continue
-        sum1 = results[alg]['regret_err_sum'][warmup_T:] 
+        sum1 = results[alg]['regret_err_sum'][warmup_T:]
         sum2 = results[alg]['regret_err_sum2'][warmup_T:]
         
         if 'oracle' in algs:

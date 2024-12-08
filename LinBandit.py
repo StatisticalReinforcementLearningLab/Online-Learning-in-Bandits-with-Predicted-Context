@@ -281,7 +281,135 @@ class LinBandit:
             "regret_list": regret_list
         }
         return(history) 
-    
+    def Adv_w_predicted_state(self, C, gamma = 0.1, l = 1., p_0 = 0.1, decay_cut = 0.):
+        ## runs the UCB algorithm on the bandit instance with hyperparameters C, l, p_0, ignoring meas. err.
+        ##          p_0: minimum selection probability
+        ##          C: parameter for UCB - coefficient before confidence width in UCB
+        ##          l: parameter for UCB - parameter in ridge regression
+        ##          x_tilde_list: list of predicted contexts
+        ##          potential_reward_list: list of potential reward (to compare with other algorithms)
+        ## returns: estimation_err_list, cumulative_regret
+        ##          history also contains: x_tilde_list, potential_reward_list, at_dag_list,
+        ##          theta_est_list: all estimated theta (posterior mean), n_action * T * d
+        ##          pi_list: policy, T * n_action
+        ##          at_list: action, T
+        ##          cumulative_regret = \sum_t [E_{pi_t_dag}mu(x_t, a) - E_{pi_t}mu(x_t, a)]
+        x_tilde_list, potential_reward_list, at_dag_list = self.potential_list['x_tilde_list'],\
+                                                        self.potential_list['potential_reward_list'],\
+                                                        self.potential_list['at_dag_list']
+        d = self.dim
+        T = x_tilde_list.shape[0]
+        theta = self.theta
+        n_action = self.n_action
+        if (n_action != 2):
+            return(None)
+
+        # Candidate attack budget
+        num = int(np.ceil(np.log(4* T)/np.log(2)))
+        J_list = [2**j for j in range(num+1)]
+        J = len(J_list)
+        weights = [1]*J
+
+        H = np.sqrt(T)
+        alpha = min(1, np.sqrt(J * np.log(J) / (np.e-1) /(T / H)))
+        
+
+        
+        ## initialization of returned values
+        theta_est_list = np.zeros((n_action, T, d)) 
+        pi_list = np.zeros((T, n_action))
+        at_list = np.zeros(T)
+        estimation_err_list = np.zeros((T, n_action))
+        regret_list = np.zeros(T)
+        
+        ## algorithm initialization
+        regret = 0. # cumulative regret up to current time
+        Vt = np.zeros((n_action, d, d))  # Vt[a, :, :] = l * I + sum_{\tau<t} 1_{A_\tau = a}\tilde X_\tau \tilde X_\tau^\top
+        for a in range(n_action):
+            Vt[a, :, :] = l * np.eye(d)
+        bt = np.zeros((n_action, d)) # bt[a, :] = sum_{\tau<t} 1_{A_\tau = a}\tilde X_\tau r_\tau
+        t = 0 # current time (from 0 to T-1)
+        burden = 0.0
+
+        ji = 0
+        cur_sum = 0
+        p = []
+        
+        ## algorithm iterations
+        while t < T:
+            if t % H == 0 and t > 0:
+                # reset when an epoch ends
+                Vt = np.zeros((n_action, d, d))  # Vt[a, :, :] = l * I + sum_{\tau<t} 1_{A_\tau = a}\tilde X_\tau \tilde X_\tau^\top
+                for a in range(n_action):
+                    Vt[a, :, :] = l * np.eye(d)
+                bt = np.zeros((n_action, d)) # bt[a, :] = sum_{\tau<t} 1_{A_\tau = a}\tilde X_\tau r_\tau
+
+                hat_y = [0 for _ in range(J)]
+                hat_y[ji] = cur_sum / p[ji]
+                
+                weights = [weights[j] * np.exp(alpha / J * hat_y[j]) for j in range(J)]
+
+                p = [alpha / J + (1-alpha) * (weights[j] / np.sum(weights)) for j in range(J)]
+                ji = np.random.choice(range(J), p = p)
+
+                cur_sum = 0
+            
+            x_tilde_t = x_tilde_list[t]
+            
+            ## compute best action using Vt, bt, update estimation error
+            UCB_list = np.zeros(n_action)
+            for i_action in range(n_action):
+                theta_a_hat = np.matmul(np.linalg.inv(Vt[i_action, :, :]), bt[i_action, :].reshape((d, 1))).reshape(d)
+                mu_a = np.dot(theta_a_hat, x_tilde_t)
+                sigma_a2 = np.dot(x_tilde_t, np.matmul(np.linalg.inv(Vt[i_action, :, :]), x_tilde_t))
+                UCB_list[i_action] = mu_a + (C + gamma * J_list[ji]) * np.sqrt(sigma_a2)
+                theta_est_list[i_action, t, :] = theta_a_hat
+                # estimation_err_list[t, i_action] = (theta_a_hat[6] - theta[6, i_action])**2
+                estimation_err_list[t, i_action] = np.linalg.norm(theta_a_hat - theta[:, i_action])
+            at_ucb = np.argmax(UCB_list)  # best action from UCB
+            
+            ## compute current policy pi_t, adjust with clipping, compute regret
+            if decay_cut > 0 and t > int(decay_cut * T):
+                p_0 = 0
+            for i_action in range(n_action):
+                if (i_action == at_ucb):
+                    pi_list[t, i_action] = 1 - (n_action - 1) * p_0
+                else:
+                    pi_list[t, i_action] = p_0*1.0
+            regret_t = self.compute_regret(pi_list[t, 0], p_0, t)
+            regret = regret + regret_t
+            regret_list[t] = regret
+            
+            ## sample from pi_t to obtain a_t, observe reward
+            at = np.random.binomial(1, pi_list[t, 1]) 
+            at_list[t] = at
+            rt = potential_reward_list[t, at]  
+            
+            cur_sum += rt
+            
+            if decay_cut > 0 and t > int(decay_cut * T):
+                t = t+1
+                continue
+            
+            ## update Vt, bt for all actions (only data w. action a is changed)
+            Vt[at, :, :] = Vt[at, :, :] + np.matmul(x_tilde_t.reshape((d, 1)), x_tilde_t.reshape((1, d)))
+            bt[at, :] = bt[at, :] + x_tilde_t * rt
+
+            ## update t
+            t = t + 1
+        
+        ## history construction
+        history = {
+            "x_tilde_list": x_tilde_list,
+            "potential_reward_list": potential_reward_list,
+            "at_dag_list": at_dag_list,
+            "theta_est_list": theta_est_list,
+            "at_list": at_list,
+            "pi_list": pi_list,
+            "estimation_err_list": estimation_err_list,
+            "regret_list": regret_list
+        }
+        return(history) 
     def UCB_w_predicted_state(self, C, l = 1., p_0 = 0.1, decay_cut = 0.):
         ## runs the UCB algorithm on the bandit instance with hyperparameters C, l, p_0, ignoring meas. err.
         ##          p_0: minimum selection probability

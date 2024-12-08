@@ -1,8 +1,10 @@
 ## simulation: construct bandit instance, compare estimation and regret of proposed algorithm and TS
-## Run experiments on synthetic environment
 from LinBandit import *
 import argparse
 from visualization import *
+import numpy as np
+import random
+import os
 
 parser = argparse.ArgumentParser(
                     prog='LinBandit with Predited Context')
@@ -19,11 +21,12 @@ parser.add_argument('--decay_coef', type=float, default=1)
 parser.add_argument('--decay_cut', type=float, default=0.)  
 parser.add_argument('--sigma', type=float, default=1.0)  
 parser.add_argument('--sigma_e', type=float, default=1./4)
-parser.add_argument('--scale', type=float, default=1)  
+parser.add_argument('--scale', type=float, default=1)
 parser.add_argument('--dist_ops', type=int, default=0)  
 parser.add_argument('--save_name', type=str, default='res')
 parser.add_argument('--theta0', nargs='+', type=int, default=[1, 0, 0, 0, 0])
 parser.add_argument('--theta1', nargs='+', type=int, default=[0, 1, -1, 1, -1])
+parser.add_argument('--seed', type=int, default=1)
 # parser.add_argument('--theta0', nargs='+', type=int, default=[6, 5, 5, 5, 5])
 # parser.add_argument('--theta1', nargs='+', type=int, default=[5, 6, 4, 6, 4])
 
@@ -31,7 +34,12 @@ parser.add_argument('--ind_S', type=int, default=50)
 parser.add_argument('--save', action='store_true')
 # parser.add_argument('--theta0', nargs='+', type=int, default=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) 
 # parser.add_argument('--theta1', nargs='+', type=int, default=[0, 0, 2, 0, 2, 1, 2, 0, 2, 0]) 
+
+
 args = parser.parse_args()
+
+np.random.seed(seed=args.seed)#
+random.seed(args.seed)
 
 decay = args.decay
 T = args.T
@@ -59,7 +67,8 @@ for t in range(T):
     Sigma_e_list[t, :, :] = Sigma_e
 p_0 = args.p
 
-algs = ['TS', 'UCB', 'MEB', 'MEB_naive', 'oracle']
+# algs = ['TS', 'UCB', 'MEB', 'MEB_naive', 'oracle', 'Adv_UCB']
+algs = ['oracle', 'Adv_UCB']
 ind_S = (np.arange(T) > args.ind_S)
 pi_nd_list = 0.5 * np.ones((T, n_action))
 attr = {'TS': {'name':'TS_w_predicted_state',
@@ -70,6 +79,8 @@ attr = {'TS': {'name':'TS_w_predicted_state',
                'para': {'ind_S':ind_S, 'pi_nd_list':pi_nd_list, 'l':l, 'p_0':p_0, 
                         'decay':decay, 'decay_tmp': args.decay_tmp, 'decay_coef': args.decay_coef,
                         'decay_cut': args.decay_cut}},
+        'Adv_UCB': {'name':'Adv_w_predicted_state',
+                'para': {'C': 1., 'l':l, 'p_0': p_0, 'decay_cut': args.decay_cut}},
         'MEB_naive': {'name':'online_me_adjust_w_predicted_state',
                  'para': {'ind_S':ind_S, 'pi_nd_list':pi_nd_list, 'l':l, 'p_0':p_0, 'naive':True, 
                           'decay':decay, 'decay_tmp': args.decay_tmp, 'decay_coef': args.decay_coef,
@@ -105,7 +116,9 @@ if args.save:
     import pickle
 
     #!!!!!! Store data, change file name !!!!!!
-    with open('Pickle_files/%s.pickle'%(args.save_name), 'wb') as handle:
+    if not os.path.exists('Pickle_files_synthetic'):
+        os.makedirs('Pickle_files_synthetic')
+    with open('Pickle_files_synthetic/%s.pickle'%(args.save_name), 'wb') as handle:
         pickle.dump((results, algs, attr, args), handle)
 else:
     # this is for Jupyter Notebook
